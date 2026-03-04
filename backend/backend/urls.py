@@ -4,22 +4,14 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 # Import all your ViewSets
-from core.views import (
-    ProfileViewSet,
-    GameViewSet,
-    GameAnalysisViewSet,
-    WeaknessPatternViewSet,
-    PracticeSessionViewSet,
-    UserReflectionViewSet,
-)
+from core.views import *
 
 router = DefaultRouter()
-router.register(r'profiles', ProfileViewSet, basename='profile')
-router.register(r'games', GameViewSet, basename='game')
+
+
 router.register(r'game-analyses', GameAnalysisViewSet, basename='gameanalysis')
-router.register(r'weaknesses', WeaknessPatternViewSet, basename='weakness')
-router.register(r'practice-sessions', PracticeSessionViewSet, basename='practicesession')
-router.register(r'reflections', UserReflectionViewSet, basename='reflection')
+router.register(r'move-analyses', MoveAnalysisViewSet, basename='moveanalysis')
+
 
 urlpatterns = [
     path('admin/', admin.site.urls),

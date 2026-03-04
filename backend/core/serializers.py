@@ -1,59 +1,55 @@
 # core/serializers.py
+
 from rest_framework import serializers
-from .models import Profile, Game, GameAnalysis, WeaknessPattern, UserReflection , PracticeSession
-from django.contrib.auth.models import User
+from .models import GameAnalysis, MoveAnalysis
 
 
-class UserSerializer(serializers.ModelSerializer):
+class MoveAnalysisSerializer(serializers.ModelSerializer):
     class Meta:
-        model = User
-        fields = ['id', 'username', 'email']
-
-
-class ProfileSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-
-    class Meta:
-        model = Profile
-        fields = '__all__'
-
-
-class GameSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Game
+        model = MoveAnalysis
         fields = [
-            'id', 'platform', 'external_id', 'pgn', 'played_at',
-            'white', 'black', 'result', 'my_color', 'my_rating',
-            'opponent_rating', 'opening_eco', 'opening_name',
-            'created_at'
+            'id',
+            'ply',
+            'move_number',
+            'player',
+            'is_your_move',
+            'san',
+            'uci',
+            'fen_after',
+            'eval_before',
+            'eval_after',
+            'centipawn_loss',
+            'classification',
+            'top_engine_moves',
+            'themes',
+            'short_note',
         ]
-        read_only_fields = ['created_at', 'opening_eco', 'opening_name']
+        read_only_fields = fields  # all read-only for now (analysis is generated)
 
 
 class GameAnalysisSerializer(serializers.ModelSerializer):
-    game = serializers.PrimaryKeyRelatedField(queryset=Game.objects.all())
+    move_analyses = MoveAnalysisSerializer(many=True, read_only=True)
 
     class Meta:
         model = GameAnalysis
-        fields = ['id', 'game', 'insights', 'voice_notes', 'buddy_advice', 'created_at']
-        read_only_fields = ['created_at']
-
-
-class WeaknessPatternSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = WeaknessPattern
-        fields = '__all__'
-        read_only_fields = ['last_seen']
-        
-# core/serializers.py  ← ADD THESE
-
-class PracticeSessionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PracticeSession
-        fields = '__all__'
-
-
-class UserReflectionSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = UserReflection
-        fields = '__all__'
+        fields = [
+            'id',
+            'game',
+            'accuracy_white_pct',
+            'accuracy_black_pct',
+            'accuracy_yours_pct',
+            'avg_centipawn_loss',
+            'avg_cpl_yours',
+            'blunder_count',
+            'mistake_count',
+            'inaccuracy_count',
+            'avg_time_per_move_yours_sec',
+            'time_pressure_moves',
+            'main_weakness_tag',
+            'opening_performance',
+            'buddy_summary',
+            'analyzed_at',
+            'engine_depth_used',
+            'move_analyses',           # nested moves (optional depth control later)
+        ]
+        read_only_fields = fields  # analysis is backend-generated

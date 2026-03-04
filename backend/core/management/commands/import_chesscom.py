@@ -1,4 +1,3 @@
-# core/management/commands/import_chesscom.py
 import requests
 import io
 import chess.pgn
@@ -6,6 +5,10 @@ from datetime import datetime
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
 from core.models import Game
+
+HEADERS = {
+    'User-Agent': 'PersonalChessBuddy/1.0 (contact: F230761@cfd.nu.edu.pk)',  # ← CHANGE THIS!
+}
 
 
 class Command(BaseCommand):
@@ -28,7 +31,7 @@ class Command(BaseCommand):
 
         # Step 1: Get list of monthly archives
         archives_url = f"https://api.chess.com/pub/player/{chesscom_username}/games/archives"
-        response = requests.get(archives_url)
+        response = requests.get(archives_url , headers= HEADERS)
         if response.status_code != 200:
             self.stderr.write(self.style.ERROR(f"Failed to get archives: {response.status_code}"))
             return
@@ -41,7 +44,7 @@ class Command(BaseCommand):
         for archive_url in archives:
             # Step 2: Get PGN for this month
             pgn_url = archive_url + "/pgn"
-            pgn_response = requests.get(pgn_url)
+            pgn_response = requests.get(pgn_url , headers = HEADERS)
             if pgn_response.status_code != 200:
                 self.stdout.write(self.style.WARNING(f"Skipping {archive_url} - status {pgn_response.status_code}"))
                 continue

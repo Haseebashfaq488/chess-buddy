@@ -1,38 +1,42 @@
 # core/models.py
+
 from django.db import models
 from django.contrib.auth.models import User
-import chess.pgn  # we'll use this later
+import chess.pgn
+import io
+
+# ────────────────────────────────────────────────
+# Existing models (keep what you already have)
+# ────────────────────────────────────────────────
 
 class Profile(models.Model):
-    """Your personal settings & overall stats"""
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     current_rating = models.IntegerField(default=800)
     target_rating = models.IntegerField(default=1500)
-    preferred_voice = models.CharField(max_length=50, default="default")  # for future voice-over
+    preferred_voice = models.CharField(max_length=50, default="default")
     
     def __str__(self):
         return f"{self.user.username}'s Profile"
 
+
 class Game(models.Model):
-    """Stores every game you import from chess.com or lichess"""
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     
     PLATFORM_CHOICES = [('chess.com', 'Chess.com'), ('lichess', 'Lichess')]
     platform = models.CharField(max_length=20, choices=PLATFORM_CHOICES)
-    external_id = models.CharField(max_length=100, blank=True, null=True)  # game ID from platform
+    external_id = models.CharField(max_length=100, blank=True, null=True)
     
     pgn = models.TextField(help_text="Full PGN of the game")
     played_at = models.DateTimeField()
     
     white = models.CharField(max_length=100)
     black = models.CharField(max_length=100)
-    result = models.CharField(max_length=10)  # "1-0", "0-1", "1/2-1/2"
+    result = models.CharField(max_length=10)
     
     my_color = models.CharField(max_length=5, choices=[('white', 'White'), ('black', 'Black')])
     my_rating = models.IntegerField(null=True, blank=True)
     opponent_rating = models.IntegerField(null=True, blank=True)
     
-    # Auto-filled from PGN
     opening_eco = models.CharField(max_length=10, blank=True)
     opening_name = models.CharField(max_length=200, blank=True)
     
@@ -41,75 +45,100 @@ class Game(models.Model):
     def __str__(self):
         return f"{self.played_at.date()} - {self.white} vs {self.black} ({self.result})"
 
-    def get_board(self):
-        """Helper to parse PGN with python-chess (we'll use this a lot)"""
-        game = chess.pgn.read_game(io.StringIO(self.pgn))
-        return game
+    def get_pgn_game(self):
+        return chess.pgn.read_game(io.StringIO(self.pgn))
+
+
+# ────────────────────────────────────────────────
+# New / Updated Analysis Models (phase 1 focus)
+# ────────────────────────────────────────────────
 
 class GameAnalysis(models.Model):
-    """Where the Buddy stores insights, weaknesses, and your thinking notes"""
+    """
+    Overall summary statistics for one analyzed game.
+    Filled by engine analysis (Stockfish / similar).
+    """
     game = models.OneToOneField(Game, on_delete=models.CASCADE, related_name='analysis')
     
-    # JSON field for flexible ML insights
-    insights = models.JSONField(default=dict)  
-    # Example content:
-    # {
-    #   "thinking_process": "You missed the counterplay on the queenside",
-    #   "weakness_detected": "hanging pieces after time pressure",
-    #   "recommended_opening_drill": "Italian Game - 3...Bc5 line"
-    # }
+    # Accuracy & quality metrics (your side only or both)
+    accuracy_white_pct   = models.FloatField(null=True, blank=True, help_text="White's overall accuracy %")
+    accuracy_black_pct   = models.FloatField(null=True, blank=True, help_text="Black's overall accuracy %")
+    accuracy_yours_pct   = models.FloatField(null=True, blank=True, help_text="Your side accuracy %")
     
-    voice_notes = models.TextField(blank=True, null=True)  # future: store what you said in voice
-    buddy_advice = models.TextField(blank=True, null=True)
-
-    created_at = models.DateTimeField(auto_now_add=True)
-
-class WeaknessPattern(models.Model):
-    """Long-term patterns the Buddy learns about you"""
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    category = models.CharField(max_length=50)  # e.g. "opening", "tactics", "time_pressure", "blunder"
-    description = models.TextField()
-    frequency = models.IntegerField(default=1)
-    last_seen = models.DateTimeField(auto_now=True)
-    severity = models.IntegerField(default=1)  # 1-10
+    avg_centipawn_loss   = models.FloatField(null=True, blank=True, help_text="Average CPL for the game")
+    avg_cpl_yours        = models.FloatField(null=True, blank=True, help_text="Your average CPL")
+    
+    blunder_count        = models.IntegerField(default=0)
+    mistake_count        = models.IntegerField(default=0)
+    inaccuracy_count     = models.IntegerField(default=0)
+    
+    # Time-related (only if [%clk] tags exist in PGN)
+    avg_time_per_move_yours_sec = models.FloatField(null=True, blank=True)
+    time_pressure_moves         = models.IntegerField(default=0, help_text="Moves where you had <10s and position was critical")
+    
+    # Short auto-generated tags for quick filtering
+    main_weakness_tag    = models.CharField(max_length=80, blank=True, help_text="e.g. 'middlegame tactics', 'time trouble'")
+    opening_performance  = models.CharField(max_length=80, blank=True, help_text="e.g. 'solid in Ruy Lopez', 'weak in Sicilian'")
+    
+    # Text summary the Buddy can speak/read
+    buddy_summary        = models.TextField(blank=True)
+    
+    analyzed_at          = models.DateTimeField(auto_now_add=True)
+    engine_depth_used    = models.IntegerField(default=18)
 
     def __str__(self):
-        return f"{self.category} - {self.description[:50]}"
-    
-    
-# core/models.py  ← ADD THESE AT THE END
-
-class PracticeSession(models.Model):
-    """Live practice or redo session with the Buddy"""
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    game = models.ForeignKey(Game, on_delete=models.SET_NULL, null=True, blank=True)  # optional (for redoing uploaded games)
-    session_type = models.CharField(max_length=20, choices=[
-        ('new_practice', 'New Practice Game'),
-        ('game_review', 'Redo Uploaded Game'),
-    ])
-    started_at = models.DateTimeField(auto_now_add=True)
-    current_pgn = models.TextField(blank=True)  # live PGN being built
-    current_move_number = models.IntegerField(default=0)
-    is_active = models.BooleanField(default=True)
-
-    def __str__(self):
-        return f"Session {self.id} - {self.session_type} ({self.user})"
+        return f"Analysis of {self.game}"
 
 
-class UserReflection(models.Model):
-    """Where you tell the Buddy what you were thinking (voice → text)"""
-    practice_session = models.ForeignKey(PracticeSession, on_delete=models.CASCADE, related_name='reflections')
-    move_number = models.IntegerField()                    # e.g. after move 12
-    position_fen = models.CharField(max_length=100)        # exact board position (super useful)
+class MoveAnalysis(models.Model):
+    """
+    Detailed per-move engine evaluation.
+    One record per half-move (ply).
+    Purely objective — no user input/reflections here.
+    """
+    game_analysis = models.ForeignKey(GameAnalysis, on_delete=models.CASCADE, related_name='move_analyses')
     
-    user_thought = models.TextField()                      # "I played e4 because I wanted to attack..."
-    buddy_response = models.TextField(blank=True, null=True)  # Buddy's reply
+    ply               = models.IntegerField()                      # 0 = white move 1, 1 = black move 1, ...
+    move_number       = models.IntegerField()                      # human: 1,1,2,2,...
+    player            = models.CharField(max_length=5)             # 'white' or 'black'
+    is_your_move      = models.BooleanField()                      # True if this was YOUR color's move
     
-    voice_transcript = models.TextField(blank=True, null=True)  # raw voice if we want
-    created_at = models.DateTimeField(auto_now_add=True)
+    san               = models.CharField(max_length=10)            # e4, Nxf6, O-O
+    uci               = models.CharField(max_length=5)             # e2e4, g8f6
+    fen_after         = models.CharField(max_length=100)           # position after this move
+    
+    # Engine scores
+    eval_before       = models.FloatField(null=True, blank=True, help_text="Centipawns before move (positive = white advantage)")
+    eval_after        = models.FloatField(null=True, blank=True)
+    centipawn_loss    = models.FloatField(null=True, blank=True)
+    
+    # Move quality classification
+    CLASS_CHOICES = [
+        ('book',       'Book move / theory'),
+        ('best',       'Best move'),
+        ('excellent',  'Excellent'),
+        ('good',       'Good'),
+        ('inaccuracy', 'Inaccuracy'),
+        ('mistake',    'Mistake'),
+        ('blunder',    'Blunder'),
+        ('missed_win', 'Missed win'),
+    ]
+    classification    = models.CharField(max_length=20, choices=CLASS_CHOICES, blank=True)
+    
+    # Optional: top alternatives (can be empty list)
+    top_engine_moves  = models.JSONField(default=list, blank=True,
+        help_text='Example: [{"uci":"d2d4","score":0.45,"depth":18}, ...]')
+
+    # Simple auto-detected themes (expandable later)
+    themes            = models.JSONField(default=list, blank=True,
+        help_text='["development", "pawn_break", "hanging_piece", "fork", "pin", ...]')
+
+    # Short generated note
+    short_note        = models.CharField(max_length=120, blank=True)
 
     class Meta:
-        ordering = ['move_number']
+        ordering = ['ply']
+        verbose_name_plural = "Move Analyses"
 
     def __str__(self):
-        return f"Move {self.move_number} - {self.user_thought[:50]}..."
+        return f"Move {self.move_number} ({self.player}): {self.san} - {self.classification}"
