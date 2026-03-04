@@ -1,113 +1,55 @@
-# core/management/commands/import_chesscom.py
+import requests
 import os
-import io
-import chess.pgn
-from datetime import datetime
 from django.core.management.base import BaseCommand
-from django.contrib.auth.models import User
-from core.models import Game
 
+HEADERS = {
+    'User-Agent': 'PersonalChessBuddy/1.0 (contact: F230761@cfd.nu.edu.pk)',
+}
 
-class Command(BaseCommand):
-    help = 'Import games from locally downloaded chess.com PGN files'
+class Command(BaseCommand):   # ← MUST be exactly "Command" (capital C)
+    help = 'Download all monthly PGN files from chess.com and save them locally'
 
     def add_arguments(self, parser):
-        parser.add_argument('--django_user', type=str, default='admin',
-                            help='Django superuser username to assign games to (default: admin)')
-        parser.add_argument('--folder', type=str, default='downloads/pgn_chesscom',
-                            help='Folder containing the downloaded .pgn files')
+        parser.add_argument('username', type=str, help='Your chess.com username')
 
     def handle(self, *args, **options):
-        django_username = options['django_user']
-        folder_path = options['folder']
+        username = options['username']
+        folder = os.path.join('downloads', 'pgn_chesscom')
+        os.makedirs(folder, exist_ok=True)
 
-        try:
-            django_user = User.objects.get(username=django_username)
-        except User.DoesNotExist:
-            self.stderr.write(self.style.ERROR(f"Django user '{django_username}' not found!"))
+        # Get list of archives
+        archives_url = f"https://api.chess.com/pub/player/{username}/games/archives"
+        response = requests.get(archives_url, headers=HEADERS)
+
+        if response.status_code != 200:
+            self.stdout.write(self.style.ERROR(f"Failed to get archives: {response.status_code}"))
             return
 
-        if not os.path.isdir(folder_path):
-            self.stderr.write(self.style.ERROR(f"Folder not found: {folder_path}"))
-            return
+        archives = response.json().get('archives', [])
+        self.stdout.write(self.style.SUCCESS(f"Found {len(archives)} monthly archives. Starting download..."))
 
-        pgn_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.pgn')]
-        if not pgn_files:
-            self.stdout.write(self.style.WARNING(f"No .pgn files found in {folder_path}"))
-            return
+        downloaded = 0
 
-        self.stdout.write(self.style.SUCCESS(f"Found {len(pgn_files)} PGN files in {folder_path}. Starting import..."))
+        for archive_url in archives:
+            parts = archive_url.split('/')
+            year = parts[-2]
+            month = parts[-1]
+            filename = f"pgn_{year}_{month}.pgn"
+            filepath = os.path.join(folder, filename)
 
-        imported_count = 0
+            pgn_url = archive_url + "/pgn"
+            pgn_response = requests.get(pgn_url, headers=HEADERS)
 
-        for filename in pgn_files:
-            filepath = os.path.join(folder_path, filename)
-            self.stdout.write(f"Processing {filename}...")
-
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                pgn_text = f.read()
-
-            if not pgn_text.strip():
-                self.stdout.write(self.style.WARNING(f"  → Empty file, skipping"))
+            if pgn_response.status_code != 200:
+                self.stdout.write(self.style.WARNING(f"Skipped {filename} (status {pgn_response.status_code})"))
                 continue
 
-            pgn_io = io.StringIO(pgn_text)
-            game_count_this_file = 0
+            content = pgn_response.text
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(content)
 
-            while True:
-                game = chess.pgn.read_game(pgn_io)
-                if game is None:
-                    break
+            file_size = len(content)
+            downloaded += 1
+            self.stdout.write(self.style.SUCCESS(f"Downloaded → {filename} ({file_size} chars)"))
 
-                game_count_this_file += 1
-
-                headers = game.headers
-
-                # Date & time
-                played_at_str = headers.get("UTCDate", "") + " " + headers.get("UTCTime", "")
-                try:
-                    played_at = datetime.strptime(played_at_str.strip(), "%Y.%m.%d %H:%M:%S")
-                except:
-                    played_at = datetime.now()
-
-                white = headers.get("White", "Unknown")
-                black = headers.get("Black", "Unknown")
-                result = headers.get("Result", "*")
-
-                # Assume your username is "chuss-smasher" (change if different)
-                my_username = "chuss-smasher"
-                my_color = 'white' if white.lower() == my_username.lower() else 'black'
-                my_rating = int(headers.get("WhiteElo" if my_color == 'white' else "BlackElo", 0) or 0)
-                opp_rating = int(headers.get("BlackElo" if my_color == 'white' else "WhiteElo", 0) or 0)
-
-                opening_eco = headers.get("ECO", "")
-                opening_name = headers.get("Opening", "")
-
-                # Unique identifier (Site URL tail or fallback)
-                site = headers.get("Site", "")
-                external_id = site.split('/')[-1] if site else f"local_{filename}_{game_count_this_file}"
-
-                # Skip if already imported
-                if Game.objects.filter(external_id=external_id, platform='chess.com').exists():
-                    continue
-
-                Game.objects.create(
-                    user=django_user,
-                    platform='chess.com',
-                    external_id=external_id,
-                    pgn=str(game),
-                    played_at=played_at,
-                    white=white,
-                    black=black,
-                    result=result,
-                    my_color=my_color,
-                    my_rating=my_rating,
-                    opponent_rating=opp_rating,
-                    opening_eco=opening_eco,
-                    opening_name=opening_name,
-                )
-                imported_count += 1
-
-            self.stdout.write(self.style.SUCCESS(f"  → Parsed {game_count_this_file} games from {filename}"))
-
-        self.stdout.write(self.style.SUCCESS(f"\nImport finished! Added {imported_count} new games."))
+        self.stdout.write(self.style.SUCCESS(f"\nDone! {downloaded} PGN files saved in:\n   backend\\downloads\\pgn_chesscom"))

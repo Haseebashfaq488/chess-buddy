@@ -93,7 +93,15 @@ class MoveAnalysisInline(admin.TabularInline):
         'ply', 'move_number', 'player', 'is_your_move',
         'san', 'uci', 'fen_after',
         'eval_before', 'eval_after', 'centipawn_loss',
-        'classification', 'top_engine_moves', 'themes', 'short_note',
+        'classification', 'top_engine_moves', 'themes', 'short_note','weakness_model_output',
+            'weakness_confidence',
+            'weakness_summary',
+            'tactic_model_output',
+            'tactic_confidence',
+            'tactic_summary',
+            'decision_model_output',
+            'decision_confidence',
+            'decision_summary',
     )
     can_delete = False
     show_change_link = True
@@ -110,6 +118,10 @@ class GameAnalysisAdmin(admin.ModelAdmin):
         'mistake_count',
         'inaccuracy_count',
         'main_weakness_tag',
+        'weakness_game_summary',
+        'tactic_game_summary',
+        'decision_game_summary',
+        'meta_coach_summary',
     )
     list_filter = ('analyzed_at', 'main_weakness_tag')
     search_fields = ('game__white', 'game__black', 'buddy_summary')
@@ -130,7 +142,10 @@ class GameAnalysisAdmin(admin.ModelAdmin):
         ('Accuracy', {
             'fields': (
                 'accuracy_white_pct', 'accuracy_black_pct', 'accuracy_yours_pct',
-                'avg_centipawn_loss', 'avg_cpl_yours',
+                'avg_centipawn_loss', 'avg_cpl_yours','weakness_game_summary',
+            'tactic_game_summary',
+            'decision_game_summary',
+            'meta_coach_summary',
             )
         }),
         ('Classifications', {

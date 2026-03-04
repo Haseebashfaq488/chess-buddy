@@ -85,6 +85,12 @@ class GameAnalysis(models.Model):
     
     analyzed_at          = models.DateTimeField(auto_now_add=True)
     engine_depth_used    = models.IntegerField(default=18)
+    
+    weakness_game_summary = models.TextField(blank=True)
+    tactic_game_summary = models.TextField(blank=True)
+    decision_game_summary = models.TextField(blank=True)
+
+    meta_coach_summary = models.TextField(blank=True)
 
     def __str__(self):
         return f"Analysis of {self.game}"
@@ -135,6 +141,20 @@ class MoveAnalysis(models.Model):
 
     # Short generated note
     short_note        = models.CharField(max_length=120, blank=True)
+    
+    weakness_model_output = models.JSONField(default=dict, blank=True)
+    weakness_confidence = models.FloatField(null=True, blank=True)
+    weakness_summary = models.TextField(blank=True)
+    
+    tactic_model_output = models.JSONField(default=dict, blank=True)
+    tactic_confidence = models.FloatField(null=True, blank=True)
+    tactic_summary = models.TextField(blank=True)
+    
+    decision_model_output = models.JSONField(default=dict, blank=True)
+    decision_confidence = models.FloatField(null=True, blank=True)
+    decision_summary = models.TextField(blank=True)
+    
+    
 
     class Meta:
         ordering = ['ply']

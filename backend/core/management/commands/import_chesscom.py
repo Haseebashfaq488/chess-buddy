@@ -1,27 +1,32 @@
-import requests
+# core/management/commands/import_chesscom.py
+import os
+import warnings
 import io
 import chess.pgn
 from datetime import datetime
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import User
 from core.models import Game
+from django.utils import timezone
 
-HEADERS = {
-    'User-Agent': 'PersonalChessBuddy/1.0 (contact: F230761@cfd.nu.edu.pk)',  # ← CHANGE THIS!
-}
-
+warnings.filterwarnings(
+    "ignore",
+    message="DateTimeField .* received a naive datetime",
+    category=RuntimeWarning
+)
 
 class Command(BaseCommand):
-    help = 'Import games from chess.com for a given user'
+    help = 'Import games from locally downloaded chess.com PGN files'
 
     def add_arguments(self, parser):
-        parser.add_argument('username', type=str, help='Your chess.com username')
         parser.add_argument('--django_user', type=str, default='admin',
                             help='Django superuser username to assign games to (default: admin)')
+        parser.add_argument('--folder', type=str, default='downloads/pgn_chesscom',
+                            help='Folder containing the downloaded .pgn files')
 
     def handle(self, *args, **options):
-        chesscom_username = options['username']
         django_username = options['django_user']
+        folder_path = options['folder']
 
         try:
             django_user = User.objects.get(username=django_username)
@@ -29,69 +34,81 @@ class Command(BaseCommand):
             self.stderr.write(self.style.ERROR(f"Django user '{django_username}' not found!"))
             return
 
-        # Step 1: Get list of monthly archives
-        archives_url = f"https://api.chess.com/pub/player/{chesscom_username}/games/archives"
-        response = requests.get(archives_url , headers= HEADERS)
-        if response.status_code != 200:
-            self.stderr.write(self.style.ERROR(f"Failed to get archives: {response.status_code}"))
+        if not os.path.isdir(folder_path):
+            self.stderr.write(self.style.ERROR(f"Folder not found: {folder_path}"))
             return
 
-        archives = response.json().get('archives', [])
-        self.stdout.write(self.style.SUCCESS(f"Found {len(archives)} monthly archives"))
+        pgn_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.pgn')]
+        if not pgn_files:
+            self.stdout.write(self.style.WARNING(f"No .pgn files found in {folder_path}"))
+            return
+
+        self.stdout.write(self.style.SUCCESS(f"Found {len(pgn_files)} PGN files in {folder_path}. Starting import..."))
 
         imported_count = 0
+        skipped_count = 0
 
-        for archive_url in archives:
-            # Step 2: Get PGN for this month
-            pgn_url = archive_url + "/pgn"
-            pgn_response = requests.get(pgn_url , headers = HEADERS)
-            if pgn_response.status_code != 200:
-                self.stdout.write(self.style.WARNING(f"Skipping {archive_url} - status {pgn_response.status_code}"))
-                continue
+        for filename in pgn_files:
+            filepath = os.path.join(folder_path, filename)
+            self.stdout.write(f"Processing {filename}...")
 
-            pgn_text = pgn_response.text
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                pgn_text = f.read()
+
             if not pgn_text.strip():
+                self.stdout.write(self.style.WARNING(f"  → Empty file, skipping"))
                 continue
 
-            # Step 3: Parse multi-game PGN
             pgn_io = io.StringIO(pgn_text)
+            game_count_this_file = 0
+
             while True:
                 game = chess.pgn.read_game(pgn_io)
                 if game is None:
                     break
 
-                # Extract metadata
+                game_count_this_file += 1
+
                 headers = game.headers
+
+                # Date & time (critical for duplicate check)
                 played_at_str = headers.get("UTCDate", "") + " " + headers.get("UTCTime", "")
                 try:
-                    played_at = datetime.strptime(played_at_str, "%Y.%m.%d %H:%M:%S")
+                    played_at = datetime.strptime(played_at_str.strip(), "%Y.%m.%d %H:%M:%S")
                 except:
-                    played_at = datetime.now()  # fallback
+                    played_at = datetime.now()  # fallback - rare
 
-                white = headers.get("White", "Unknown")
-                black = headers.get("Black", "Unknown")
+                white = headers.get("White", "Unknown").strip()
+                black = headers.get("Black", "Unknown").strip()
                 result = headers.get("Result", "*")
 
-                # Determine your color and ratings
-                my_color = 'white' if white.lower() == chesscom_username.lower() else 'black'
-                my_rating = int(headers.get("WhiteElo" if my_color == 'white' else "BlackElo", 0))
-                opp_rating = int(headers.get("BlackElo" if my_color == 'white' else "WhiteElo", 0))
+                # NEW: Duplicate check based on date-time + players
+                if Game.objects.filter(
+                    played_at=played_at,
+                    white__iexact=white,
+                    black__iexact=black,
+                    platform='chess.com'
+                ).exists():
+                    skipped_count += 1
+                    continue
 
-                # Basic opening (we'll improve later)
+                my_username = "chuss-smasher"
+                my_color = 'white' if white.lower() == my_username.lower() else 'black'
+                my_rating = int(headers.get("WhiteElo" if my_color == 'white' else "BlackElo", 0) or 0)
+                opp_rating = int(headers.get("BlackElo" if my_color == 'white' else "WhiteElo", 0) or 0)
+
                 opening_eco = headers.get("ECO", "")
                 opening_name = headers.get("Opening", "")
 
-                # Save to DB (skip if external_id already exists)
-                external_id = headers.get("Site", "").split('/')[-1]  # e.g. live/123456
-
-                if Game.objects.filter(external_id=external_id, platform='chess.com').exists():
-                    continue  # already imported
+                # Optional: still generate external_id for future use (but not used for duplicate check)
+                site = headers.get("Site", "")
+                external_id = site.split('/')[-1] if site else f"local_{filename}_{game_count_this_file}"
 
                 Game.objects.create(
                     user=django_user,
                     platform='chess.com',
-                    external_id=external_id,
-                    pgn=str(game),  # full PGN string
+                    external_id=external_id,  # keep it, just not used for skip
+                    pgn=str(game),
                     played_at=played_at,
                     white=white,
                     black=black,
@@ -104,4 +121,11 @@ class Command(BaseCommand):
                 )
                 imported_count += 1
 
-        self.stdout.write(self.style.SUCCESS(f"Import finished! Added {imported_count} new games."))
+            self.stdout.write(self.style.SUCCESS(f"  → Parsed {game_count_this_file} games from {filename}"))
+
+        self.stdout.write(self.style.SUCCESS(
+            f"\nImport finished!\n"
+            f"  Added: {imported_count} new games\n"
+            f"  Skipped (already exists): {skipped_count}\n"
+            f"  Total processed: {imported_count + skipped_count}"
+        ))

@@ -23,6 +23,15 @@ class MoveAnalysisSerializer(serializers.ModelSerializer):
             'top_engine_moves',
             'themes',
             'short_note',
+            'weakness_model_output',
+            'weakness_confidence',
+            'weakness_summary',
+            'tactic_model_output',
+            'tactic_confidence',
+            'tactic_summary',
+            'decision_model_output',
+            'decision_confidence',
+            'decision_summary',
         ]
         read_only_fields = fields  # all read-only for now (analysis is generated)
 
@@ -50,6 +59,11 @@ class GameAnalysisSerializer(serializers.ModelSerializer):
             'buddy_summary',
             'analyzed_at',
             'engine_depth_used',
-            'move_analyses',           # nested moves (optional depth control later)
+            'move_analyses', 
+            'weakness_game_summary',
+            'tactic_game_summary',
+            'decision_game_summary',
+            'meta_coach_summary',
+            # nested moves (optional depth control later)
         ]
         read_only_fields = fields  # analysis is backend-generated
